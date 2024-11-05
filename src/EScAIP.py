@@ -221,6 +221,7 @@ class EfficientlyScaledAttentionInteratomicPotential(nn.Module, GraphModelMixin)
             )
 
         # construct input data
+        #TODO: (optional) global charge and spin information
         x = GraphAttentionData(
             atomic_numbers=atomic_numbers,
             node_direction_expansion=node_direction_expansion,
@@ -359,6 +360,7 @@ class EScAIPExportable(nn.Module):
     # @torch.compile()
     # @torch.compile(mode='max-autotune')
     def forward(self, x: GraphAttentionData) -> tuple[torch.Tensor, torch.Tensor]:
+        #TODO: (optional) charge and spin predictions
         # input block
         node_features, edge_features = self.input_block(x)
 

@@ -52,7 +52,7 @@ class Runner(Checkpointable):
             self.trainer.logger.mark_preempting()
         return DelayedSubmission(new_runner, self.config)
 
-
+# TODO: test on trace and possibly modify?
 def main():
     """Run the main fairchem program."""
     setup_logging()

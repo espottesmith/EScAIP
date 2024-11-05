@@ -12,7 +12,7 @@ from ..configs import (
     RegularizationConfigs,
 )
 
-
+#TODO: magmoms, partial_charges, partial_spins
 class OutputLayer(nn.Module):
     """
     Get the final prediction from the readouts (force or energy)
