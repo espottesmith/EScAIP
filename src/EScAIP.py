@@ -68,6 +68,12 @@ class EfficientlyScaledAttentionInteratomicPotential(nn.Module, GraphModelMixin)
         self.regress_forces = cfg.global_cfg.regress_forces
         self.use_pbc = cfg.molecular_graph_cfg.use_pbc
 
+        # Electronic information
+        self.use_global_charge_spin = cfg.global_cfg.use_global_charge_spin
+        self.regress_charges = cfg.global_cfg.regress_charges
+        self.regress_spins = cfg.global_cfg.regress_spins
+        self.electronic_intermediate = cfg.global_cfg.electronic_intermediate
+
         # edge distance expansion
         expansion_func = {
             "gaussian": GaussianSmearing,
@@ -167,6 +173,23 @@ class EfficientlyScaledAttentionInteratomicPotential(nn.Module, GraphModelMixin)
             edge_index, self.molecular_graph_cfg.max_neighbors, data.num_nodes
         )
 
+        # Charge and spin information
+        # TODO: Check this
+        num_nodes, _ = neighbor_list.shape
+        if self.global_cfg.use_global_charge_spin:
+            charge = data.charge.long()
+            spin_multiplicity = data.spin_multiplicity.long()
+        else:
+            charge = torch.zeros(num_nodes, dtype=torch.long, device=atomic_numbers.device)
+            spin_multiplicity = torch.zeros(num_nodes, dtype=torch.long, device=atomic_numbers.device)
+
+        try:
+            atomic_partial_charges = data.atomic_partial_charges
+            atomic_partial_spins = data.atomic_partial_spins
+        except AttributeError:
+            atomic_partial_charges = torch.zeros_like(atomic_numbers, dtype=torch.float)
+            atomic_partial_spins = torch.zeros_like(atomic_partial_charges)
+
         # map neighbor list
         map_neighbor_list_ = partial(
             map_neighbor_list,
@@ -177,9 +200,15 @@ class EfficientlyScaledAttentionInteratomicPotential(nn.Module, GraphModelMixin)
         edge_direction = map_neighbor_list_(edge_direction)
         edge_distance_expansion = map_neighbor_list_(edge_distance_expansion)
 
+        # TODO: check that this works for datasets without charge/spin info
+        # Probably there will need to be checks and empty variables will need to be filled
         # pad batch
         (
             atomic_numbers,
+            charge,
+            spin_multiplicity,
+            atomic_partial_charges,
+            atomic_partial_spins,
             node_direction_expansion,
             edge_distance_expansion,
             edge_direction,
@@ -191,6 +220,10 @@ class EfficientlyScaledAttentionInteratomicPotential(nn.Module, GraphModelMixin)
         ) = pad_batch(
             max_num_nodes_per_batch=self.molecular_graph_cfg.max_num_nodes_per_batch,
             atomic_numbers=atomic_numbers,
+            charge=charge,
+            spin_multiplicity=spin_multiplicity,
+            atomic_partial_charges=atomic_partial_charges,
+            atomic_partial_spins=atomic_partial_spins,
             node_direction_expansion=node_direction_expansion,
             edge_distance_expansion=edge_distance_expansion,
             edge_direction=edge_direction,
@@ -221,9 +254,12 @@ class EfficientlyScaledAttentionInteratomicPotential(nn.Module, GraphModelMixin)
             )
 
         # construct input data
-        #TODO: (optional) global charge and spin information
         x = GraphAttentionData(
+            charge=charge,
+            spin_multiplicity=spin_multiplicity,
             atomic_numbers=atomic_numbers,
+            atomic_partial_charges=atomic_partial_charges,
+            atomic_partial_spins=atomic_partial_spins,
             node_direction_expansion=node_direction_expansion,
             edge_distance_expansion=edge_distance_expansion,
             edge_direction=edge_direction,
@@ -249,11 +285,11 @@ class EfficientlyScaledAttentionInteratomicPotential(nn.Module, GraphModelMixin)
             if not hasattr(self, "compiled_exported_model"):
                 self.compiled_exported_model = self.export_and_compile_model(data)
             # forward pass
-            energy_output, force_output = self.compiled_exported_model(x)
+            energy_output, force_output, charge_output, spin_output = self.compiled_exported_model(x)
         elif self.global_cfg.use_compile:
-            energy_output, force_output = torch.compile(self.exportable_model)(x)
+            energy_output, force_output, charge_output, spin_output = torch.compile(self.exportable_model)(x)
         else:
-            energy_output, force_output = self.exportable_model(x)
+            energy_output, force_output, charge_output, spin_output = self.exportable_model(x)
 
         outputs = {"energy": energy_output}
 
@@ -263,6 +299,11 @@ class EfficientlyScaledAttentionInteratomicPotential(nn.Module, GraphModelMixin)
                     energy_output, data.pos
                 )
             outputs["forces"] = force_output
+
+        if self.regress_charges:
+            outputs["charges"] = charge_output
+        if self.regress_spins:
+            outputs["spins"] = spin_output
 
         outputs = unpad_results(
             results=outputs,
@@ -290,6 +331,7 @@ class EfficientlyScaledAttentionInteratomicPotential(nn.Module, GraphModelMixin)
         return set(no_wd_list)
 
 
+# TODO: you are here
 class EScAIPExportable(nn.Module):
     def __init__(
         self,
@@ -313,6 +355,61 @@ class EScAIPExportable(nn.Module):
             reg_cfg=self.reg_cfg,
         )
 
+        # (Optional) layers to predict atomic partial charges & spins
+        # The predicted partial charges/spins can then be used to inform energy/force prediction
+        if (self.global_cfg.electronic_intermediate
+            and self.gnn_cfg.num_layers_qmu > 0
+            and (self.global_cfg.regress_charges or self.global_cfg.regress_spins)
+        ):
+            self.transformer_blocks_qmu = nn.ModuleList(
+                [
+                    EfficientGraphAttentionBlock(
+                        global_cfg=self.global_cfg,
+                        molecular_graph_cfg=self.molecular_graph_cfg,
+                        gnn_cfg=self.gnn_cfg,
+                        reg_cfg=self.reg_cfg,
+                )
+                for _ in range(self.gnn_cfg.num_layers_qmu)
+                ]
+            )
+
+            self.readout_layers_qmu = nn.ModuleList(
+                [
+                    ReadoutBlock(
+                        global_cfg=self.global_cfg,
+                        gnn_cfg=self.gnn_cfg,
+                        reg_cfg=self.reg_cfg,
+                    )
+                    for _ in range(self.gnn_cfg.num_layers_qmu + 1)
+                ]
+            )
+
+            self.output_block_qmu = OutputBlock(
+                global_cfg=self.global_cfg,
+                molecular_graph_cfg=self.molecular_graph_cfg,
+                gnn_cfg=self.gnn_cfg,
+                reg_cfg=self.reg_cfg,
+                energy=False,
+                forces=False,
+                charges=self.global_cfg.regress_charges,
+                spins=self.global_cfg.regress_spins
+            )
+
+            # TODO: do we need another class here?
+            self.input_block_with_qmu = InputBlock(
+                global_cfg=self.global_cfg,
+                molecular_graph_cfg=self.molecular_graph_cfg,
+                gnn_cfg=self.gnn_cfg,
+                reg_cfg=self.reg_cfg,
+            )
+        else:
+            self.transformer_blocks_qmu = None
+            self.readout_layers_qmu = None
+            self.output_block_qmu = None
+            self.input_block_with_qmu = None
+
+        # TODO: how to pass outputs from output_block_pre to new input block/self.transformer_blocks
+
         # Transformer Blocks
         self.transformer_blocks = nn.ModuleList(
             [
@@ -322,7 +419,7 @@ class EScAIPExportable(nn.Module):
                     gnn_cfg=self.gnn_cfg,
                     reg_cfg=self.reg_cfg,
                 )
-                for _ in range(self.gnn_cfg.num_layers)
+                for _ in range(self.gnn_cfg.num_layers_ef)
             ]
         )
 
@@ -334,7 +431,7 @@ class EScAIPExportable(nn.Module):
                     gnn_cfg=self.gnn_cfg,
                     reg_cfg=self.reg_cfg,
                 )
-                for _ in range(self.gnn_cfg.num_layers + 1)
+                for _ in range(self.gnn_cfg.num_layers_ef + 1)
             ]
         )
 
@@ -344,6 +441,8 @@ class EScAIPExportable(nn.Module):
             molecular_graph_cfg=self.molecular_graph_cfg,
             gnn_cfg=self.gnn_cfg,
             reg_cfg=self.reg_cfg,
+            charges=self.global_cfg.regress_charges,
+            spins=self.global_cfg.regress_spins
         )
 
         # Init weights
@@ -363,6 +462,17 @@ class EScAIPExportable(nn.Module):
         #TODO: (optional) charge and spin predictions
         # input block
         node_features, edge_features = self.input_block(x)
+
+        # (Optional) layers to predict charge (q) and spin (mu)
+        if all(
+            x is not None for x in [
+                self.transformer_blocks_qmu,
+                self.readout_layers_qmu,
+                self.output_block_qmu,
+                self.input_block_with_qmu
+            ]
+        ):
+            # TODO: you are here
 
         # input readout
         readouts = self.readout_layers[0](node_features, edge_features)

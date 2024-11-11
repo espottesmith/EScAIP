@@ -108,6 +108,10 @@ def map_sender_receiver_feature(sender_feature, receiver_feature, neighbor_list)
 def pad_batch(
     max_num_nodes_per_batch,
     atomic_numbers,
+    charge,
+    spin_multiplicity,
+    atomic_partial_charges,
+    atomic_partial_spins,
     node_direction_expansion,
     edge_distance_expansion,
     edge_direction,
@@ -136,6 +140,13 @@ def pad_batch(
 
     # pad the features
     atomic_numbers = F.pad(atomic_numbers, (0, pad_size), value=0)
+
+    #TODO: check this
+    charge = F.pad(charge, (0, pad_size), value=0)
+    spin_multiplicity = F.pad(spin_multiplicity, (0, pad_size), value=0)
+    atomic_partial_charges = F.pad(atomic_partial_charges, (0, pad_size), value=0)
+    atomic_partial_spins = F.pad(atomic_partial_spins, (0, pad_size), value=0)
+
     node_direction_expansion = F.pad(
         node_direction_expansion, (0, 0, 0, pad_size), value=0
     )
@@ -174,6 +185,7 @@ def unpad_results(results, node_padding_mask, graph_padding_mask):
     """
     Unpad the results to remove the padding.
     """
+    # TODO: confirm this works for atomic partial charges/spins
     unpad_results = {}
     for key in results:
         if results[key].shape[0] == node_padding_mask.shape[0]:

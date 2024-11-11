@@ -4,12 +4,17 @@ import dataclasses
 import torch
 from xformers.ops.fmha import AttentionBias
 
-
+# TODO: alter instantiation
+# Charge/spin info needs to be optional; defaults zeros? Defaults False?
 @dataclasses.dataclass
 class GraphAttentionData:
     """
     Custom dataclass for storing graph data for Graph Attention Networks
+    charge: (1)
+    spin_multiplicity: (1)
     atomic_numbers: (N)
+    atomic_partial_charges: (N)
+    atomic_partial_spins: (N)
     edge_distance_expansion: (N, max_nei, edge_distance_expansion_size)
     edge_direction: (N, max_nei, 3)
     node_direction_expansion: (N, node_direction_expansion_size)
@@ -21,7 +26,11 @@ class GraphAttentionData:
     attn_bias: AttentionBias for xformers kernel
     """
 
+    charge: torch.Tensor
+    spin_multiplicity: torch.Tensor
     atomic_numbers: torch.Tensor
+    atomic_partial_charges: torch.Tensor
+    atomic_partial_spins: torch.Tensor
     edge_distance_expansion: torch.Tensor
     edge_direction: torch.Tensor
     node_direction_expansion: torch.Tensor

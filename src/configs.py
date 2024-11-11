@@ -6,6 +6,10 @@ from typing import Any, Dict, Literal, Type
 class GlobalConfigs:
     regress_forces: bool
     direct_force: bool
+    use_global_charge_spin: bool
+    regress_charges: bool
+    regress_spins: bool
+    electronic_intermediate: bool
     use_fp16_backbone: bool
     hidden_size: int  # divisible by 2 and num_heads
     batch_size: int
@@ -32,7 +36,7 @@ class MolecularGraphConfigs:
 
 @dataclass
 class GraphNeuralNetworksConfigs:
-    num_layers: int
+    num_layers_ef: int
     atom_embedding_size: int
     node_direction_embedding_size: int
     node_direction_expansion_size: int
@@ -48,6 +52,7 @@ class GraphNeuralNetworksConfigs:
     readout_hidden_layer_multiplier: int
     output_hidden_layer_multiplier: int
     ffn_hidden_layer_multiplier: int
+    num_layers_qmu: int = 0
 
 
 @dataclass
