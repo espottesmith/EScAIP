@@ -28,7 +28,7 @@ class BaseGraphNeuralNetworkLayer(nn.Module):
         super().__init__()
 
         # Atomic number embeddings
-        # ref: escn https://github.com/Open-Catalyst-Project/ocp/blob/main/ocpmodels/models/escn/escn.py#L823
+        # ref: escn https://github.com/FAIR-Chem/fairchem/blob/main/src/fairchem/core/models/escn/escn.py#L823
         self.source_atomic_embedding = nn.Embedding(
             molecular_graph_cfg.max_num_elements, gnn_cfg.atom_embedding_size
         )
@@ -37,6 +37,17 @@ class BaseGraphNeuralNetworkLayer(nn.Module):
         )
         nn.init.uniform_(self.source_atomic_embedding.weight.data, -0.001, 0.001)
         nn.init.uniform_(self.target_atomic_embedding.weight.data, -0.001, 0.001)
+
+        # Charge and spin embeddings
+        if self.global_cfg.use_global_charge:
+            self.charge_embedding = nn.Embedding(
+                molecular_graph_cfg.max_charges, gnn_cfg.global_embedding_size
+            )
+        
+        if self.global_cfg.use_global_spin:
+            self.spin_embedding = nn.Embedding(
+                molecular_graph_cfg.max_spin_multiplicities, gnn_cfg.global_embedding_size
+            )
 
         # Node direction embedding
         self.source_direction_embedding = get_linear(
@@ -135,6 +146,12 @@ class BaseGraphNeuralNetworkLayer(nn.Module):
             node_features, node_features, neighbor_list
         )
         return torch.cat([sender_feature, receiver_feature], dim=-1)
+
+    def get_global_features(
+        self, x: GraphAttentionData
+    ) -> torch.Tensor:
+        
+        global_features = None
 
     def aggregate(self, edge_features, neighbor_mask):
         neighbor_count = neighbor_mask.sum(dim=1, keepdim=True) + 1e-5

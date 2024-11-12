@@ -6,7 +6,8 @@ from typing import Any, Dict, Literal, Type
 class GlobalConfigs:
     regress_forces: bool
     direct_force: bool
-    use_global_charge_spin: bool
+    use_global_charge: bool
+    use_global_spin: bool
     regress_charges: bool
     regress_spins: bool
     electronic_intermediate: bool
@@ -28,6 +29,8 @@ class MolecularGraphConfigs:
     max_neighbors: int
     max_radius: float
     max_num_elements: int
+    max_charges: int
+    max_spin_multiplicities: int
     avg_num_nodes: float
     max_num_nodes_per_batch: int
     enforce_max_neighbors_strictly: bool
@@ -38,6 +41,7 @@ class MolecularGraphConfigs:
 class GraphNeuralNetworksConfigs:
     num_layers_ef: int
     atom_embedding_size: int
+    global_embedding_size: int
     node_direction_embedding_size: int
     node_direction_expansion_size: int
     edge_distance_expansion_size: int

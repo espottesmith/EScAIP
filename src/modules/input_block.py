@@ -12,6 +12,11 @@ from .base_block import BaseGraphNeuralNetworkLayer
 from ..utils.nn_utils import get_feedforward, get_normalization_layer
 
 
+# TODO:
+# - incorporate global charge and spin information into node features
+# - incorporate (external) partial charge and partial spin information
+
+
 class InputLayer(BaseGraphNeuralNetworkLayer):
     def __init__(
         self,
@@ -19,6 +24,7 @@ class InputLayer(BaseGraphNeuralNetworkLayer):
         molecular_graph_cfg: MolecularGraphConfigs,
         gnn_cfg: GraphNeuralNetworksConfigs,
         reg_cfg: RegularizationConfigs,
+        use_charge_spin: bool = False
     ):
         super().__init__(global_cfg, molecular_graph_cfg, gnn_cfg, reg_cfg)
 
@@ -47,7 +53,7 @@ class InputLayer(BaseGraphNeuralNetworkLayer):
         else:
             self.backbone_dtype = torch.float32
 
-    def forward(self, inputs: GraphAttentionData):
+    def forward(self, inputs: GraphAttentionData, atomic_partial_charges: nn.Tensor | None = None, atomic_partial_spins:  nn.Tensor | None = None):
         # Get edge features
         edge_features = self.get_edge_features(inputs)
 
@@ -75,10 +81,11 @@ class InputBlock(nn.Module):
         molecular_graph_cfg: MolecularGraphConfigs,
         gnn_cfg: GraphNeuralNetworksConfigs,
         reg_cfg: RegularizationConfigs,
+        use_charge_spin: bool = False
     ):
         super().__init__()
 
-        self.input_layer = InputLayer(global_cfg, molecular_graph_cfg, gnn_cfg, reg_cfg)
+        self.input_layer = InputLayer(global_cfg, molecular_graph_cfg, gnn_cfg, reg_cfg, use_charge_spin=use_charge_spin)
 
         self.norm = get_normalization_layer(reg_cfg.normalization)(
             global_cfg.hidden_size
@@ -87,6 +94,6 @@ class InputBlock(nn.Module):
         if global_cfg.use_fp16_backbone:
             self.norm = self.norm.half()
 
-    def forward(self, inputs: GraphAttentionData):
-        node_features, edge_features = self.input_layer(inputs)
+    def forward(self, inputs: GraphAttentionData, atomic_partial_charges: nn.Tensor | None = None, atomic_partial_spins:  nn.Tensor | None = None):
+        node_features, edge_features = self.input_layer(inputs, atomic_partial_charges, atomic_partial_spins)
         return self.norm(node_features, edge_features)

@@ -69,7 +69,8 @@ class EfficientlyScaledAttentionInteratomicPotential(nn.Module, GraphModelMixin)
         self.use_pbc = cfg.molecular_graph_cfg.use_pbc
 
         # Electronic information
-        self.use_global_charge_spin = cfg.global_cfg.use_global_charge_spin
+        self.use_global_charge = cfg.global_cfg.use_global_charge
+        self.use_global_spin = cfg.global_cfg.use_global_spin
         self.regress_charges = cfg.global_cfg.regress_charges
         self.regress_spins = cfg.global_cfg.regress_spins
         self.electronic_intermediate = cfg.global_cfg.electronic_intermediate
@@ -176,11 +177,14 @@ class EfficientlyScaledAttentionInteratomicPotential(nn.Module, GraphModelMixin)
         # Charge and spin information
         # TODO: Check this
         num_nodes, _ = neighbor_list.shape
-        if self.global_cfg.use_global_charge_spin:
+        if self.global_cfg.use_global_charge:
             charge = data.charge.long()
-            spin_multiplicity = data.spin_multiplicity.long()
         else:
             charge = torch.zeros(num_nodes, dtype=torch.long, device=atomic_numbers.device)
+        
+        if self.global_cfg.use_global_spin:
+            spin_multiplicity = data.spin_multiplicity.long()
+        else:
             spin_multiplicity = torch.zeros(num_nodes, dtype=torch.long, device=atomic_numbers.device)
 
         try:
@@ -363,6 +367,7 @@ class EScAIPExportable(nn.Module):
         ):
             self.transformer_blocks_qmu = nn.ModuleList(
                 [
+                    # TODO: Make version that only uses node features?
                     EfficientGraphAttentionBlock(
                         global_cfg=self.global_cfg,
                         molecular_graph_cfg=self.molecular_graph_cfg,
@@ -375,6 +380,7 @@ class EScAIPExportable(nn.Module):
 
             self.readout_layers_qmu = nn.ModuleList(
                 [
+                    # TODO: need to make a version that only takes in node features
                     ReadoutBlock(
                         global_cfg=self.global_cfg,
                         gnn_cfg=self.gnn_cfg,
@@ -384,6 +390,7 @@ class EScAIPExportable(nn.Module):
                 ]
             )
 
+            # TODO: version that only takes in node features?
             self.output_block_qmu = OutputBlock(
                 global_cfg=self.global_cfg,
                 molecular_graph_cfg=self.molecular_graph_cfg,
@@ -401,6 +408,7 @@ class EScAIPExportable(nn.Module):
                 molecular_graph_cfg=self.molecular_graph_cfg,
                 gnn_cfg=self.gnn_cfg,
                 reg_cfg=self.reg_cfg,
+                use_charge_spin=True
             )
         else:
             self.transformer_blocks_qmu = None
@@ -458,10 +466,12 @@ class EScAIPExportable(nn.Module):
 
     # @torch.compile()
     # @torch.compile(mode='max-autotune')
-    def forward(self, x: GraphAttentionData) -> tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, x: GraphAttentionData) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
         #TODO: (optional) charge and spin predictions
         # input block
         node_features, edge_features = self.input_block(x)
+
+        charge_output, spin_output = None
 
         # (Optional) layers to predict charge (q) and spin (mu)
         if all(
@@ -472,7 +482,30 @@ class EScAIPExportable(nn.Module):
                 self.input_block_with_qmu
             ]
         ):
-            # TODO: you are here
+            # input readout
+            readouts = self.readout_layers_qmu[0](node_features)
+            node_readouts_qmu = [readouts[0]]
+
+            # transformer blocks
+            for idx in range(self.gnn_cfg.num_layers_qmu):
+                node_features = self.transformer_blocks_qmu[idx](
+                    x, node_features
+                )
+                readouts = self.readout_layers_qmu[idx + 1](node_features)
+                node_readouts_qmu.append(readouts[0])
+
+            # output block
+            # TODO: make sure this makes sense (see layer TODO above)
+            charge_output, spin_output = self.output_block_qmu(
+                node_readouts=torch.cat(node_readouts, dim=-1),
+                # edge_readouts=torch.cat(edge_readouts, dim=-1),
+                node_batch=x.node_batch,
+                # edge_direction=x.edge_direction,
+                neighbor_mask=x.neighbor_mask,
+                num_graphs=x.graph_padding_mask.shape[0],
+            )
+
+            node_features, edge_features = self.input_block_with_qmu(x, atomic_partial_charges=charge_output, atomic_partial_spins=spin_output)
 
         # input readout
         readouts = self.readout_layers[0](node_features, edge_features)
@@ -489,7 +522,7 @@ class EScAIPExportable(nn.Module):
             edge_readouts.append(readouts[1])
 
         # output block
-        energy_output, force_output = self.output_block(
+        energy_output, force_output, charge_output_temp, spin_output_temp = self.output_block(
             node_readouts=torch.cat(node_readouts, dim=-1),
             edge_readouts=torch.cat(edge_readouts, dim=-1),
             node_batch=x.node_batch,
@@ -498,4 +531,9 @@ class EScAIPExportable(nn.Module):
             num_graphs=x.graph_padding_mask.shape[0],
         )
 
-        return energy_output, force_output
+        if charge_output is None:
+            charge_output = charge_output_temp
+        if spin_output is None:
+            spin_output = spin_output_temp
+
+        return energy_output, force_output, charge_output, spin_output
