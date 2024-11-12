@@ -9,7 +9,7 @@ from ..configs import (
 )
 from ..custom_types import GraphAttentionData
 from .base_block import BaseGraphNeuralNetworkLayer
-from ..utils.nn_utils import get_feedforward, get_normalization_layer
+from ..utils.nn_utils import get_feedforward, get_linear, get_normalization_layer
 
 
 # TODO:
@@ -26,7 +26,7 @@ class InputLayer(BaseGraphNeuralNetworkLayer):
         reg_cfg: RegularizationConfigs,
         use_charge_spin: bool = False
     ):
-        super().__init__(global_cfg, molecular_graph_cfg, gnn_cfg, reg_cfg)
+        super().__init__(global_cfg, molecular_graph_cfg, gnn_cfg, reg_cfg, use_charge_spin)
 
         # Edge linear layer
         self.edge_linear = self.get_edge_linear(gnn_cfg, global_cfg, reg_cfg)
@@ -39,6 +39,15 @@ class InputLayer(BaseGraphNeuralNetworkLayer):
             dropout=reg_cfg.mlp_dropout,
             bias=True,
         )
+
+        # Incorporating atomic partial charge & spin info
+        # TODO: add embedding for partial charges/partial spins?
+        # TODO: you are here
+        self.partial_charge_linear = get_linear()
+        self.partial_spin_linear = get_linear()
+
+        self.partial_charge_ffn = get_feedforward()
+        self.partial_spin_ffn = get_feedforward()
 
         # normalization
         self.norm = get_normalization_layer(reg_cfg.normalization, is_graph=False)(
@@ -53,7 +62,11 @@ class InputLayer(BaseGraphNeuralNetworkLayer):
         else:
             self.backbone_dtype = torch.float32
 
-    def forward(self, inputs: GraphAttentionData, atomic_partial_charges: nn.Tensor | None = None, atomic_partial_spins:  nn.Tensor | None = None):
+    def forward(self,
+                inputs: GraphAttentionData,
+                atomic_partial_charges: nn.Tensor | None = None,
+                atomic_partial_spins:  nn.Tensor | None = None
+            ):
         # Get edge features
         edge_features = self.get_edge_features(inputs)
 

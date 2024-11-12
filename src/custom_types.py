@@ -10,8 +10,11 @@ from xformers.ops.fmha import AttentionBias
 class GraphAttentionData:
     """
     Custom dataclass for storing graph data for Graph Attention Networks
-    charge: (1)
-    spin_multiplicity: (1)
+    TODO: make sure to repeat charge and spin appropriately
+        (current scheme, for simplicity: repeat global charge m times,
+        where m is the number of atoms in molecule M)
+    charge: (N)
+    spin_multiplicity: (N)
     atomic_numbers: (N)
     atomic_partial_charges: (N)
     atomic_partial_spins: (N)

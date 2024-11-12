@@ -24,8 +24,11 @@ class BaseGraphNeuralNetworkLayer(nn.Module):
         molecular_graph_cfg: MolecularGraphConfigs,
         gnn_cfg: GraphNeuralNetworksConfigs,
         reg_cfg: RegularizationConfigs,
+        use_charge_spin: bool = False
     ):
         super().__init__()
+
+        self.use_charge_spin = use_charge_spin
 
         # Atomic number embeddings
         # ref: escn https://github.com/FAIR-Chem/fairchem/blob/main/src/fairchem/core/models/escn/escn.py#L823
@@ -39,15 +42,21 @@ class BaseGraphNeuralNetworkLayer(nn.Module):
         nn.init.uniform_(self.target_atomic_embedding.weight.data, -0.001, 0.001)
 
         # Charge and spin embeddings
-        if self.global_cfg.use_global_charge:
+        if global_cfg.use_global_charge and use_charge_spin:
             self.charge_embedding = nn.Embedding(
                 molecular_graph_cfg.max_charges, gnn_cfg.global_embedding_size
             )
+            nn.init.uniform_(self.charge_embedding.weight.data, -0.001, 0.001)
+        else:
+            self.charge_embedding = None
         
-        if self.global_cfg.use_global_spin:
+        if global_cfg.use_global_spin and use_charge_spin:
             self.spin_embedding = nn.Embedding(
                 molecular_graph_cfg.max_spin_multiplicities, gnn_cfg.global_embedding_size
             )
+            nn.init.uniform_(self.spin_embedding.weight.data, -0.001, 0.001)
+        else:
+            self.spin_embedding = None
 
         # Node direction embedding
         self.source_direction_embedding = get_linear(
@@ -80,10 +89,19 @@ class BaseGraphNeuralNetworkLayer(nn.Module):
         global_cfg: GlobalConfigs,
         reg_cfg: RegularizationConfigs,
     ):
-        return get_linear(
-            in_features=gnn_cfg.edge_distance_embedding_size
+
+        in_features = gnn_cfg.edge_distance_embedding_size
             + 2 * gnn_cfg.node_direction_embedding_size
-            + 2 * gnn_cfg.atom_embedding_size,
+            + 2 * gnn_cfg.atom_embedding_size
+
+        if self.use_charge_spin:
+            if global_cfg.use_global_charge:
+                in_features += gnn_cfg.global_embedding_size
+            if global_cfg.use_global_spin:
+                in_features += gnn_cfg.global_embedding_size
+
+        return get_linear(
+            in_features=in_features,
             out_features=global_cfg.hidden_size,
             activation=global_cfg.activation,
             bias=True,
@@ -127,15 +145,33 @@ class BaseGraphNeuralNetworkLayer(nn.Module):
             x.edge_distance_expansion
         )
 
+        features_to_stack = [
+            edge_distance_embedding,
+            source_direction_embedding,
+            source_atomic_embedding,
+            target_direction_embedding,
+            target_atomic_embedding,
+        ]
+
+        max_neighbors = x.neighbor_list.shape[1]
+
+        # Charge and spin embeddings
+        # TODO: check dimensions
+        if self.charge_embedding is not None:
+            charge_embedding = self.charge_embedding(x.charge)
+            size_1, size_3 = charge_embedding.shape
+            charge_embedding = charge_embedding.repeat(1, max_neighbors).reshape(size_1, max_neighbors, size_3)
+            features_to_stack.append(charge_embedding)
+        
+        if self.spin_embedding is not None:
+            spin_embedding = self.spin_embedding(x.spin_multiplicity)
+            size_1, size_3 = spin_embedding.shape
+            spin_embedding = spin_embedding.repeat(1, max_neighbors).reshape(size_1, max_neighbors, size_3)
+            features_to_stack.append(spin_embedding)
+
         # Concatenate edge features
         return torch.cat(
-            [
-                edge_distance_embedding,
-                source_direction_embedding,
-                source_atomic_embedding,
-                target_direction_embedding,
-                target_atomic_embedding,
-            ],
+            features_to_stack,
             dim=-1,
         )
 
@@ -147,11 +183,11 @@ class BaseGraphNeuralNetworkLayer(nn.Module):
         )
         return torch.cat([sender_feature, receiver_feature], dim=-1)
 
-    def get_global_features(
-        self, x: GraphAttentionData
-    ) -> torch.Tensor:
+    # def get_global_features(
+    #     self, x: GraphAttentionData
+    # ) -> torch.Tensor:
         
-        global_features = None
+    #     pass
 
     def aggregate(self, edge_features, neighbor_mask):
         neighbor_count = neighbor_mask.sum(dim=1, keepdim=True) + 1e-5
