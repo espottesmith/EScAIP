@@ -24,11 +24,13 @@ class BaseGraphNeuralNetworkLayer(nn.Module):
         molecular_graph_cfg: MolecularGraphConfigs,
         gnn_cfg: GraphNeuralNetworksConfigs,
         reg_cfg: RegularizationConfigs,
-        use_charge_spin: bool = False
+        use_global_charge_spin: bool = False,
+        use_atomic_charge_spin: bool = False
     ):
         super().__init__()
 
-        self.use_charge_spin = use_charge_spin
+        self.use_global_charge_spin = use_global_charge_spin
+        self.use_atomic_charge_spin = use_atomic_charge_spin
 
         # Atomic number embeddings
         # ref: escn https://github.com/FAIR-Chem/fairchem/blob/main/src/fairchem/core/models/escn/escn.py#L823
@@ -42,7 +44,7 @@ class BaseGraphNeuralNetworkLayer(nn.Module):
         nn.init.uniform_(self.target_atomic_embedding.weight.data, -0.001, 0.001)
 
         # Charge and spin embeddings
-        if global_cfg.use_global_charge and use_charge_spin:
+        if global_cfg.use_global_charge and self.use_global_charge_spin:
             self.charge_embedding = nn.Embedding(
                 molecular_graph_cfg.max_charges, gnn_cfg.global_embedding_size
             )
@@ -50,7 +52,7 @@ class BaseGraphNeuralNetworkLayer(nn.Module):
         else:
             self.charge_embedding = None
         
-        if global_cfg.use_global_spin and use_charge_spin:
+        if global_cfg.use_global_spin and self.use_global_charge_spin:
             self.spin_embedding = nn.Embedding(
                 molecular_graph_cfg.max_spin_multiplicities, gnn_cfg.global_embedding_size
             )
@@ -83,6 +85,45 @@ class BaseGraphNeuralNetworkLayer(nn.Module):
             dropout=reg_cfg.mlp_dropout,
         )
 
+        # Embeddings for atomic partial charges/spins
+        if global_cfg.regress_charges and self.use_atomic_charge_spin:
+            self.source_partial_charge_embedding = get_linear(
+                in_features=1,
+                out_features=gnn_cfg.atomic_charge_spin_embedding_size,
+                activation=global_cfg.activation,
+                bias=True,
+                dropout=reg_cfg.mlp_dropout
+            )
+            self.target_partial_charge_embedding = get_linear(
+                in_features=1,
+                out_features=gnn_cfg.atomic_charge_spin_embedding_size,
+                activation=global_cfg.activation,
+                bias=True,
+                dropout=reg_cfg.mlp_dropout
+            )
+        else:
+            self.source_partial_charge_embedding = None
+            self.target_partial_charge_embedding = None
+
+        if global_cfg.regress_spins and self.use_atomic_charge_spin:
+            self.source_partial_spin_embedding = get_linear(
+                in_features=1,
+                out_features=gnn_cfg.atomic_charge_spin_embedding_size,
+                activation=global_cfg.activation,
+                bias=True,
+                dropout=reg_cfg.mlp_dropout
+            )
+            self.target_partial_spin_embedding = get_linear(
+                in_features=1,
+                out_features=gnn_cfg.atomic_charge_spin_embedding_size,
+                activation=global_cfg.activation,
+                bias=True,
+                dropout=reg_cfg.mlp_dropout
+            )
+        else:
+            self.source_partial_spin_embedding = None
+            self.target_partial_spin_embedding = None
+
     def get_edge_linear(
         self,
         gnn_cfg: GraphNeuralNetworksConfigs,
@@ -94,11 +135,17 @@ class BaseGraphNeuralNetworkLayer(nn.Module):
             + 2 * gnn_cfg.node_direction_embedding_size
             + 2 * gnn_cfg.atom_embedding_size
 
-        if self.use_charge_spin:
+        if self.use_global_charge_spin:
             if global_cfg.use_global_charge:
                 in_features += gnn_cfg.global_embedding_size
             if global_cfg.use_global_spin:
                 in_features += gnn_cfg.global_embedding_size
+
+        if self.use_atomic_charge_spin:
+            if global_cfg.regress_charges:
+                in_features += 2 * gnn_cfg.atomic_charge_spin_embedding_size
+            if global_cfg.regress_spins:
+                in_features += 2 * gnn_cfg.atomic_charge_spin_embedding_size
 
         return get_linear(
             in_features=in_features,
@@ -119,7 +166,11 @@ class BaseGraphNeuralNetworkLayer(nn.Module):
             dropout=reg_cfg.mlp_dropout,
         )
 
-    def get_edge_features(self, x: GraphAttentionData) -> torch.Tensor:
+    def get_edge_features(self,
+        x: GraphAttentionData,
+        atomic_partial_charges: nn.Tensor | None = None,
+        atomic_partial_spins:  nn.Tensor | None = None
+        ) -> torch.Tensor:
         # Atomic number embeddings (ref: escn)
         source_atomic_embedding = self.source_atomic_embedding(x.atomic_numbers)
         target_atomic_embedding = self.target_atomic_embedding(x.atomic_numbers)
@@ -155,7 +206,7 @@ class BaseGraphNeuralNetworkLayer(nn.Module):
 
         max_neighbors = x.neighbor_list.shape[1]
 
-        # Charge and spin embeddings
+        # Global charge and spin embeddings
         # TODO: check dimensions
         if self.charge_embedding is not None:
             charge_embedding = self.charge_embedding(x.charge)
@@ -168,6 +219,31 @@ class BaseGraphNeuralNetworkLayer(nn.Module):
             size_1, size_3 = spin_embedding.shape
             spin_embedding = spin_embedding.repeat(1, max_neighbors).reshape(size_1, max_neighbors, size_3)
             features_to_stack.append(spin_embedding)
+
+        # Atomic partial charge and spin embeddings
+        if self.source_partial_charge_embedding and self.target_partial_charge_embedding and atomic_partial_charges:
+            source_partial_charge_embedding = self.source_partial_charge_embedding(atomic_partial_charges)
+            target_partial_charge_embedding = self.target_partial_charge_embedding(atomic_partial_charges)
+            source_partial_charge_embedding, target_partial_charge_embedding = (
+                map_sender_receiver_feature(
+                    source_partial_charge_embedding, target_partial_charge_embedding, x.neighbor_list
+                )
+            )
+
+            features_to_stack.append(source_partial_charge_embedding)
+            features_to_stack.append(target_partial_charge_embedding)
+
+        if self.source_partial_spin_embedding and self.target_partial_spin_embedding and atomic_partial_spins:
+            source_partial_spin_embedding = self.source_partial_spin_embedding(atomic_partial_spins)
+            target_partial_spin_embedding = self.target_partial_spin_embedding(atomic_partial_spins)
+            source_partial_spin_embedding, target_partial_spin_embedding = (
+                map_sender_receiver_feature(
+                    source_partial_spin_embedding, target_partial_spin_embedding, x.neighbor_list
+                )
+            )
+
+            features_to_stack.append(source_partial_spin_embedding)
+            features_to_stack.append(target_partial_spin_embedding)
 
         # Concatenate edge features
         return torch.cat(

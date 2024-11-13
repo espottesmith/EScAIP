@@ -57,6 +57,7 @@ class GraphNeuralNetworksConfigs:
     output_hidden_layer_multiplier: int
     ffn_hidden_layer_multiplier: int
     num_layers_qmu: int = 0
+    atomic_charge_spin_embedding_size: int = 0
 
 
 @dataclass

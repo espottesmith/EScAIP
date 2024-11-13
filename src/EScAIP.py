@@ -335,7 +335,6 @@ class EfficientlyScaledAttentionInteratomicPotential(nn.Module, GraphModelMixin)
         return set(no_wd_list)
 
 
-# TODO: you are here
 class EScAIPExportable(nn.Module):
     def __init__(
         self,

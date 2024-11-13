@@ -12,11 +12,6 @@ from .base_block import BaseGraphNeuralNetworkLayer
 from ..utils.nn_utils import get_feedforward, get_linear, get_normalization_layer
 
 
-# TODO:
-# - incorporate global charge and spin information into node features
-# - incorporate (external) partial charge and partial spin information
-
-
 class InputLayer(BaseGraphNeuralNetworkLayer):
     def __init__(
         self,
@@ -24,9 +19,17 @@ class InputLayer(BaseGraphNeuralNetworkLayer):
         molecular_graph_cfg: MolecularGraphConfigs,
         gnn_cfg: GraphNeuralNetworksConfigs,
         reg_cfg: RegularizationConfigs,
-        use_charge_spin: bool = False
+        use_global_charge_spin: bool = False,
+        use_atomic_charge_spin: bool = False
     ):
-        super().__init__(global_cfg, molecular_graph_cfg, gnn_cfg, reg_cfg, use_charge_spin)
+        super().__init__(
+            global_cfg,
+            molecular_graph_cfg,
+            gnn_cfg,
+            reg_cfg,
+            use_global_charge_spin=use_global_charge_spin,
+            use_atomic_charge_spin=use_atomic_charge_spin
+        )
 
         # Edge linear layer
         self.edge_linear = self.get_edge_linear(gnn_cfg, global_cfg, reg_cfg)
@@ -39,15 +42,6 @@ class InputLayer(BaseGraphNeuralNetworkLayer):
             dropout=reg_cfg.mlp_dropout,
             bias=True,
         )
-
-        # Incorporating atomic partial charge & spin info
-        # TODO: add embedding for partial charges/partial spins?
-        # TODO: you are here
-        self.partial_charge_linear = get_linear()
-        self.partial_spin_linear = get_linear()
-
-        self.partial_charge_ffn = get_feedforward()
-        self.partial_spin_ffn = get_feedforward()
 
         # normalization
         self.norm = get_normalization_layer(reg_cfg.normalization, is_graph=False)(
@@ -68,7 +62,11 @@ class InputLayer(BaseGraphNeuralNetworkLayer):
                 atomic_partial_spins:  nn.Tensor | None = None
             ):
         # Get edge features
-        edge_features = self.get_edge_features(inputs)
+        edge_features = self.get_edge_features(
+            inputs,
+            atomic_partial_charges=atomic_partial_charges,
+            atomic_partial_spins=atomic_partial_spins
+        )
 
         # Edge processing
         edge_hidden = self.edge_linear(edge_features)
@@ -94,11 +92,19 @@ class InputBlock(nn.Module):
         molecular_graph_cfg: MolecularGraphConfigs,
         gnn_cfg: GraphNeuralNetworksConfigs,
         reg_cfg: RegularizationConfigs,
-        use_charge_spin: bool = False
+        use_global_charge_spin: bool = False,
+        use_atomic_charge_spin: bool = False
     ):
         super().__init__()
 
-        self.input_layer = InputLayer(global_cfg, molecular_graph_cfg, gnn_cfg, reg_cfg, use_charge_spin=use_charge_spin)
+        self.input_layer = InputLayer(
+            global_cfg,
+            molecular_graph_cfg,
+            gnn_cfg,
+            reg_cfg,
+            use_global_charge_spin=use_global_charge_spin,
+            use_atomic_charge_spin=use_atomic_charge_spin
+        )
 
         self.norm = get_normalization_layer(reg_cfg.normalization)(
             global_cfg.hidden_size
