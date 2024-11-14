@@ -33,6 +33,7 @@ from .modules import (
     InputBlock,
     OutputBlock,
     ReadoutBlock,
+    ChargeSpinReadoutBlock
 )
 from .utils.graph_utils import (
     get_node_direction_expansion,
@@ -350,12 +351,15 @@ class EScAIPExportable(nn.Module):
         self.gnn_cfg = gnn_cfg
         self.reg_cfg = reg_cfg
 
+        use_global_charge_spin = self.global_cfg.use_global_charge or self.global_cfg.use_global_spin
+
         # Input Block
         self.input_block = InputBlock(
             global_cfg=self.global_cfg,
             molecular_graph_cfg=self.molecular_graph_cfg,
             gnn_cfg=self.gnn_cfg,
             reg_cfg=self.reg_cfg,
+            use_global_charge_spin=use_global_charge_spin
         )
 
         # (Optional) layers to predict atomic partial charges & spins
@@ -379,8 +383,8 @@ class EScAIPExportable(nn.Module):
 
             self.readout_layers_qmu = nn.ModuleList(
                 [
-                    # TODO: need to make a version that only takes in node features
-                    ReadoutBlock(
+                    # TODO: Make version that only uses node features?
+                    ChargeSpinReadoutBlock(
                         global_cfg=self.global_cfg,
                         gnn_cfg=self.gnn_cfg,
                         reg_cfg=self.reg_cfg,
@@ -407,7 +411,8 @@ class EScAIPExportable(nn.Module):
                 molecular_graph_cfg=self.molecular_graph_cfg,
                 gnn_cfg=self.gnn_cfg,
                 reg_cfg=self.reg_cfg,
-                use_charge_spin=True
+                use_global_charge_spin=use_global_charge_spin,
+                use_atomic_charge_spin=True
             )
         else:
             self.transformer_blocks_qmu = None
@@ -482,28 +487,31 @@ class EScAIPExportable(nn.Module):
             ]
         ):
             # input readout
-            readouts = self.readout_layers_qmu[0](node_features)
+            readouts = self.readout_layers_qmu[0](node_features, edge_features)
             node_readouts_qmu = [readouts[0]]
+            edge_readouts_qmu = [readouts[1]]
 
             # transformer blocks
             for idx in range(self.gnn_cfg.num_layers_qmu):
-                node_features = self.transformer_blocks_qmu[idx](
-                    x, node_features
+                node_features, edge_features = self.transformer_blocks_qmu[idx](
+                    x, node_features, edge_features
                 )
                 readouts = self.readout_layers_qmu[idx + 1](node_features)
                 node_readouts_qmu.append(readouts[0])
+                edge_readouts_qmu.append(readouts[1])
 
             # output block
             # TODO: make sure this makes sense (see layer TODO above)
             charge_output, spin_output = self.output_block_qmu(
                 node_readouts=torch.cat(node_readouts, dim=-1),
-                # edge_readouts=torch.cat(edge_readouts, dim=-1),
+                edge_readouts=torch.cat(edge_readouts, dim=-1),
                 node_batch=x.node_batch,
-                # edge_direction=x.edge_direction,
+                edge_direction=x.edge_direction,
                 neighbor_mask=x.neighbor_mask,
                 num_graphs=x.graph_padding_mask.shape[0],
             )
 
+            # TODO: probably smart to at least use the embeddings from the qmu layers, if available
             node_features, edge_features = self.input_block_with_qmu(x, atomic_partial_charges=charge_output, atomic_partial_spins=spin_output)
 
         # input readout

@@ -12,6 +12,8 @@ from ..utils.nn_utils import get_linear
 from ..custom_types import GraphAttentionData
 
 
+#TODO: change to using nn.Identity() for layers that don't need to be there??
+
 class BaseGraphNeuralNetworkLayer(nn.Module):
     """
     Base class for Graph Neural Network layers.
