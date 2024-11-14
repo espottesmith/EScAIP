@@ -33,8 +33,15 @@ class EfficientGraphAttention(BaseGraphNeuralNetworkLayer):
         molecular_graph_cfg: MolecularGraphConfigs,
         gnn_cfg: GraphNeuralNetworksConfigs,
         reg_cfg: RegularizationConfigs,
+        use_global_charge_spin: bool = False,
     ):
-        super().__init__(global_cfg, molecular_graph_cfg, gnn_cfg, reg_cfg)
+        super().__init__(
+            global_cfg,
+            molecular_graph_cfg,
+            gnn_cfg,
+            reg_cfg,
+            use_global_charge_spin=use_global_charge_spin
+        )
 
         # Edge linear layer
         self.edge_linear = self.get_edge_linear(gnn_cfg, global_cfg, reg_cfg)
@@ -133,6 +140,7 @@ class EfficientGraphAttention(BaseGraphNeuralNetworkLayer):
         self,
         data: GraphAttentionData,
         node_features: torch.Tensor,
+        edge_features: torch.Tensor
     ):
         # Get edge features
         edge_features = self.get_edge_features(data)
@@ -203,6 +211,7 @@ class EfficientGraphAttentionBlock(nn.Module):
         molecular_graph_cfg: MolecularGraphConfigs,
         gnn_cfg: GraphNeuralNetworksConfigs,
         reg_cfg: RegularizationConfigs,
+        use_global_charge_spin: bool = False,
     ):
         super().__init__()
 
@@ -212,6 +221,7 @@ class EfficientGraphAttentionBlock(nn.Module):
             molecular_graph_cfg=molecular_graph_cfg,
             gnn_cfg=gnn_cfg,
             reg_cfg=reg_cfg,
+            use_global_charge_spin=use_global_charge_spin
         )
 
         # Feed forward network

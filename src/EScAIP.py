@@ -376,6 +376,7 @@ class EScAIPExportable(nn.Module):
                         molecular_graph_cfg=self.molecular_graph_cfg,
                         gnn_cfg=self.gnn_cfg,
                         reg_cfg=self.reg_cfg,
+                        use_global_charge_spin=use_global_charge_spin
                 )
                 for _ in range(self.gnn_cfg.num_layers_qmu)
                 ]
@@ -430,6 +431,7 @@ class EScAIPExportable(nn.Module):
                     molecular_graph_cfg=self.molecular_graph_cfg,
                     gnn_cfg=self.gnn_cfg,
                     reg_cfg=self.reg_cfg,
+                    use_global_charge_spin=use_global_charge_spin
                 )
                 for _ in range(self.gnn_cfg.num_layers_ef)
             ]
