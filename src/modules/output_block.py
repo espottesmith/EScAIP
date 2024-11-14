@@ -12,7 +12,7 @@ from ..configs import (
     RegularizationConfigs,
 )
 
-#TODO: magmoms, partial_charges, partial_spins
+
 class OutputLayer(nn.Module):
     """
     Get the final prediction from the readouts (force or energy)
@@ -23,7 +23,13 @@ class OutputLayer(nn.Module):
         global_cfg: GlobalConfigs,
         gnn_cfg: GraphNeuralNetworksConfigs,
         reg_cfg: RegularizationConfigs,
-        output_type: Literal["Energy", "ForceDirection", "ForceMagnitude"],
+        output_type: Literal[
+            "Energy",
+            "ForceDirection",
+            "ForceMagnitude",
+            "AtomicPartialCharge",
+            "AtomicPartialSpin"
+        ],
     ):
         super().__init__()
 
@@ -32,6 +38,8 @@ class OutputLayer(nn.Module):
             "Energy": 1,
             "ForceDirection": 3,
             "ForceMagnitude": 1,
+            "AtomicPartialCharge": 1,
+            "AtomicPartialSpin": 1
         }
         assert (
             output_type in output_type_dict.keys()
@@ -80,11 +88,17 @@ class OutputBlock(nn.Module):
         molecular_graph_cfg: MolecularGraphConfigs,
         gnn_cfg: GraphNeuralNetworksConfigs,
         reg_cfg: RegularizationConfigs,
+        energy=True,
+        forces=True,
+        partial_charges=True,
+        partial_spins=True
     ):
         super().__init__()
 
         self.regress_forces = global_cfg.regress_forces
         self.direct_force = global_cfg.direct_force
+        self.regress_charges = global_cfg.regress_charges
+        self.regress_spins = global_cfg.regress_spins
         self.register_buffer(
             "avg_num_nodes", torch.tensor(molecular_graph_cfg.avg_num_nodes)
         )
@@ -98,15 +112,19 @@ class OutputBlock(nn.Module):
         )
 
         # energy output layer
-        self.energy_layer = OutputLayer(
-            global_cfg=global_cfg,
-            gnn_cfg=gnn_cfg,
-            reg_cfg=reg_cfg,
-            output_type="Energy",
-        )
+        if energy:
+            self.energy_layer = OutputLayer(
+                global_cfg=global_cfg,
+                gnn_cfg=gnn_cfg,
+                reg_cfg=reg_cfg,
+                output_type="Energy",
+            )
+            self.energy_output_fn = self.get_energy_output
+        else:
+            self.energy_output_fn = lambda *_, **__: None
 
         # force output layer
-        if self.regress_forces and self.direct_force:
+        if self.regress_forces and self.direct_force and forces:
             # map concatenated readout features to hidden size
             self.edge_input_projection = get_linear(
                 in_features=global_cfg.hidden_size * (gnn_cfg.num_layers + 1),
@@ -130,41 +148,31 @@ class OutputBlock(nn.Module):
         else:
             self.force_output_fn = lambda *_, **__: None
 
-    def get_force_output(
-        self, node_readouts, edge_readouts, edge_direction, neighbor_mask
-    ):
-        edge_readouts = self.edge_input_projection(edge_readouts)
-        # get force direction from edge readouts
-        force_direction = self.force_direction_layer(
-            edge_readouts
-        )  # (num_nodes, max_neighbor, 3)
-        force_direction = (
-            force_direction * edge_direction
-        )  # (num_nodes, max_neighbor, 3)
-        force_direction = (force_direction * neighbor_mask.unsqueeze(-1)).sum(
-            dim=1
-        )  # (num_nodes, 3)
-        # get force magnitude from node readouts
-        force_magnitude = self.force_magnitude_layer(node_readouts)  # (num_nodes, 1)
-        # get output force
-        force_output = force_direction * force_magnitude  # (num_nodes, 3)
-        return force_output
+        if self.regress_charges and partial_charges:
+            self.partial_charge_layer = OutputLayer(
+                global_cfg=global_cfg,
+                gnn_cfg=gnn_cfg,
+                reg_cfg=reg_cfg,
+                output_type="AtomicPartialCharge",
+            )
+            self.charge_output_fn = self.get_charge_output
+        else:
+            self.charge_output_fn = lambda *_, **__: None
 
-    def forward(
-        self,
-        node_readouts,
-        edge_readouts,
-        edge_direction,
-        node_batch,
-        neighbor_mask,
-        num_graphs,
-    ):
-        # map to float32
-        node_readouts = node_readouts.to(torch.float32)
-        edge_readouts = edge_readouts.to(torch.float32)
+        if self.regress_spins and partial_spins:
+            self.partial_spin_layer = OutputLayer(
+                global_cfg=global_cfg,
+                gnn_cfg=gnn_cfg,
+                reg_cfg=reg_cfg,
+                output_type="AtomicPartialSpin",
+            )
+            self.spin_output_fn = self.get_spin_output
+        else:
+            self.spin_output_fn = lambda *_, **__: None
 
-        # get energy from node readouts
-        node_readouts = self.node_input_projection(node_readouts)
+    def get_energy_output(
+        self, node_readouts
+    ):
         energy_output = self.energy_layer(node_readouts)
 
         # the following not compatible with torch.compile
@@ -185,9 +193,62 @@ class OutputBlock(nn.Module):
             / self.avg_num_nodes
         )
 
+        return energy_output
+
+    def get_force_output(
+        self, node_readouts, edge_readouts, edge_direction, neighbor_mask
+    ):
+        edge_readouts = self.edge_input_projection(edge_readouts)
+        # get force direction from edge readouts
+        force_direction = self.force_direction_layer(
+            edge_readouts
+        )  # (num_nodes, max_neighbor, 3)
+        force_direction = (
+            force_direction * edge_direction
+        )  # (num_nodes, max_neighbor, 3)
+        force_direction = (force_direction * neighbor_mask.unsqueeze(-1)).sum(
+            dim=1
+        )  # (num_nodes, 3)
+        # get force magnitude from node readouts
+        force_magnitude = self.force_magnitude_layer(node_readouts)  # (num_nodes, 1)
+        # get output force
+        force_output = force_direction * force_magnitude  # (num_nodes, 3)
+        return force_output
+
+    def get_charge_output(
+        self, node_readouts
+    ):
+        return self.partial_charge_layer(node_readouts)
+
+    def get_spin_output(
+        self, node_readouts
+    ):
+        return self.partial_spin_layer(node_readouts)
+
+    def forward(
+        self,
+        node_readouts,
+        edge_readouts,
+        edge_direction,
+        node_batch,
+        neighbor_mask,
+        num_graphs,
+    ):
+        # map to float32
+        node_readouts = node_readouts.to(torch.float32)
+        edge_readouts = edge_readouts.to(torch.float32)
+
+        # get energy from node readouts
+        node_readouts = self.node_input_projection(node_readouts)
+
+        energy_output = self.energy_output_fn(node_readouts)
+
         # get force from edge readouts and node readouts
         force_output = self.force_output_fn(
             node_readouts, edge_readouts, edge_direction, neighbor_mask
         )
 
-        return energy_output, force_output
+        charge_output = self.charge_output_fn(node_readouts)
+        spin_output = self.spin_output_fn(node_readouts)
+
+        return energy_output, force_output, charge_output, spin_output
