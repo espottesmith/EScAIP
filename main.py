@@ -52,13 +52,15 @@ class Runner(Checkpointable):
             self.trainer.logger.mark_preempting()
         return DelayedSubmission(new_runner, self.config)
 
-# TODO: test on trace and possibly modify?
+# TODO: test on Bridges-2
 def main():
     """Run the main fairchem program."""
     setup_logging()
 
     parser: argparse.ArgumentParser = flags.get_parser()
-    parser.add_argument("--nersc", action="store_true", help="Run with NERSC")
+    parser.add_argument("--nersc", action="store_true", help="Run on NERSC Perlmutter")
+    parser.add_argument("--bridges", action="store_true", help="Run on PSC Bridges-2")
+    parser.add_argument("--gpu-type", default="v100-32", help="Class of GPUs to use on PSC Bridges-2")
     args: argparse.Namespace
     override_args: list[str]
     args, override_args = parser.parse_known_args()
@@ -68,11 +70,19 @@ def main():
         args.identifier = args.timestamp_id
 
     if args.submit:  # Run on cluster
+        if args.nersc and args.bridges:
+            raise ValueError(
+                "Both --nersc and --bridges were provided; choose at most one HPC system and modify accordingly!"
+            )
+
         slurm_add_params = config.get("slurm", None)  # additional slurm arguments
         if args.nersc:
             slurm_add_params["gpus"] = (
                 args.num_gpus * args.num_nodes
             )  # total number of gpus, required for NERSC
+        elif args.bridges:
+            slurm_add_params["gpus"] = f"{args.gpu_type}:{args.num_nodes * args.num_gpus}"
+        
         configs = create_grid(config, args.sweep_yml) if args.sweep_yml else [config]
 
         logging.info(f"Submitting {len(configs)} jobs")
