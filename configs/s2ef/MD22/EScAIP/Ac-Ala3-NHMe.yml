@@ -1,11 +1,11 @@
 includes:
   - configs/s2ef/MD22/datasets/Ac-Ala3-NHMe/base.yml
   - configs/s2ef/MD22/EScAIP/base/L6_H8_512_.yml
-  - configs/slurm/regular.yml
 
 model:
-  avg_num_nodes: 42
-  max_num_nodes_per_batch: 48
+  backbone:
+    batch_size: 48
+    max_num_nodes_per_batch: 48
 optim:
   batch_size: 48
   eval_batch_size: 32

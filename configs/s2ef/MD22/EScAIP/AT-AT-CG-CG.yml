@@ -1,11 +1,11 @@
 includes:
   - configs/s2ef/MD22/datasets/AT-AT-CG-CG/base.yml
   - configs/s2ef/MD22/EScAIP/base/L6_H8_512_.yml
-  - configs/slurm/regular.yml
 
 model:
-  avg_num_nodes: 118
-  max_num_nodes_per_batch: 128
+  backbone:
+    batch_size: 14
+    max_num_nodes_per_batch: 128
 optim:
   batch_size: 14
   eval_batch_size: 10

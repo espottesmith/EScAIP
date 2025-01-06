@@ -105,6 +105,38 @@ def map_sender_receiver_feature(sender_feature, receiver_feature, neighbor_list)
     return (sender_feature, receiver_feature)
 
 
+@torch.compile
+def get_attn_mask(
+    edge_direction: torch.Tensor,
+    neighbor_mask: torch.Tensor,
+    num_heads: int,
+    use_angle_embedding: bool,
+):
+    # create a mask for empty neighbors
+    batch_size, max_neighbors = neighbor_mask.shape
+    attn_mask = torch.zeros(
+        batch_size, max_neighbors, max_neighbors, device=neighbor_mask.device
+    )
+    attn_mask = attn_mask.masked_fill(~neighbor_mask.unsqueeze(1), float("-inf"))
+
+    # repeat the mask for each head
+    attn_mask = (
+        attn_mask.unsqueeze(1)
+        .expand(batch_size, num_heads, max_neighbors, max_neighbors)
+        .reshape(batch_size * num_heads, max_neighbors, max_neighbors)
+    )
+
+    # get the angle embeddings
+    dot_product = torch.matmul(edge_direction, edge_direction.transpose(1, 2))
+    dot_product = (
+        dot_product.unsqueeze(1)
+        .expand(-1, num_heads, -1, -1)
+        .reshape(batch_size * num_heads, max_neighbors, max_neighbors)
+    )
+
+    return attn_mask, dot_product
+
+
 def pad_batch(
     max_num_nodes_per_batch,
     atomic_numbers,
@@ -218,3 +250,40 @@ def patch_singleton_atom(edge_direction, neighbor_list, neighbor_mask):
     neighbor_mask[idx, 0] = 1
 
     return edge_direction, neighbor_list, neighbor_mask
+
+
+def compilable_scatter(
+    src: torch.Tensor,
+    index: torch.Tensor,
+    dim_size: int,
+    dim: int = 0,
+    reduce: str = "sum",
+) -> torch.Tensor:
+    """
+    torch_scatter scatter function with compile support.
+    Modified from torch_geometric.utils.scatter_.
+    """
+
+    def broadcast(src: torch.Tensor, ref: torch.Tensor, dim: int) -> torch.Tensor:
+        dim = ref.dim() + dim if dim < 0 else dim
+        size = ((1,) * dim) + (-1,) + ((1,) * (ref.dim() - dim - 1))
+        return src.view(size).expand_as(ref)
+
+    dim = src.dim() + dim if dim < 0 else dim
+    size = src.size()[:dim] + (dim_size,) + src.size()[dim + 1 :]
+
+    if reduce == "sum" or reduce == "add":
+        index = broadcast(index, src, dim)
+        return src.new_zeros(size).scatter_add_(dim, index, src)
+
+    if reduce == "mean":
+        count = src.new_zeros(dim_size)
+        count.scatter_add_(0, index, src.new_ones(src.size(dim)))
+        count = count.clamp(min=1)
+
+        index = broadcast(index, src, dim)
+        out = src.new_zeros(size).scatter_add_(dim, index, src)
+
+        return out / broadcast(count, out, dim)
+
+    raise ValueError((f"Invalid reduce option '{reduce}'."))

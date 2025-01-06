@@ -59,10 +59,8 @@ model:
     weight_decay: 0.01
 
   heads:
-    energy:
-      module: src.EScAIP.EScAIPDirectForceHead
-    forces:
-      module: src.EScAIP.EScAIPEnergyHead
+    grad_energy_forces:
+      module: src.EScAIP.EScAIPGradientEnergyForceHead
     stress:
       module: src.EScAIP.EScAIPRank2Head
       output_name: stress

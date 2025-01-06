@@ -118,6 +118,30 @@ def get_feedforward(
     )
 
 
+def no_weight_decay(model):
+    # no weight decay on layer norms and embeddings
+    # ref: https://discuss.pytorch.org/t/weight-decay-in-the-optimizers-is-a-bad-idea-especially-with-batchnorm/16994
+    no_wd_list = []
+    named_parameters_list = [name for name, _ in model.named_parameters()]
+    for module_name, module in model.named_modules():
+        if isinstance(module, (nn.Linear, nn.Embedding, nn.LayerNorm, nn.RMSNorm)):
+            for parameter_name, _ in module.named_parameters():
+                if isinstance(module, torch.nn.Linear):
+                    if "weight" in parameter_name:
+                        continue
+                global_parameter_name = module_name + "." + parameter_name
+                assert global_parameter_name in named_parameters_list
+                no_wd_list.append(global_parameter_name)
+    return set(no_wd_list)
+
+
+def init_linear_weights(module, gain=1.0):
+    if isinstance(module, nn.Linear):
+        nn.init.xavier_uniform_(module.weight, gain=gain)
+        if module.bias is not None:
+            module.bias.data.zero_()
+
+
 ## The following part is modified from xformers
 ## Ref: https://github.com/facebookresearch/xformers/blob/main/xformers/components/residual.py
 

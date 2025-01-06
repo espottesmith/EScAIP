@@ -6,7 +6,7 @@ import torch
 from torch import nn
 
 
-def stochastic_depth(
+def stochastic_depth_2d(
     input: torch.Tensor, batch: torch.Tensor, p: float, training: bool = True
 ) -> torch.Tensor:
     """
@@ -39,6 +39,25 @@ def stochastic_depth(
     return input * noise[batch]
 
 
+# Exact same copy to make torch compile happy, or it will recompile...
+def stochastic_depth_3d(
+    input: torch.Tensor, batch: torch.Tensor, p: float, training: bool = True
+) -> torch.Tensor:
+    if p < 0.0 or p > 1.0:
+        raise ValueError(f"drop probability has to be between 0 and 1, but got {p}")
+    if not training or p == 0.0:
+        return input
+
+    batch_size = batch.max() + 1
+    survival_rate = 1.0 - p
+    size = [batch_size] + [1] * (input.ndim - 1)
+    noise = torch.empty(size, dtype=input.dtype, device=input.device)
+    noise = noise.bernoulli_(survival_rate)
+    if survival_rate > 0.0:
+        noise.div_(survival_rate)
+    return input * noise[batch]
+
+
 class StochasticDepth(nn.Module):
     """
     Stochastic Depth for graph features.
@@ -49,11 +68,15 @@ class StochasticDepth(nn.Module):
         self.p = p
 
     def forward(self, node_features, edge_features, node_batch):
-        node_features = stochastic_depth(
-            node_features, node_batch, self.p, self.training
+        # Ensure contiguous layout to make torch compile happy
+        node_features = node_features.contiguous()
+        edge_features = edge_features.contiguous()
+
+        node_features = stochastic_depth_2d(
+            input=node_features, batch=node_batch, p=self.p, training=self.training
         )
-        edge_features = stochastic_depth(
-            edge_features, node_batch, self.p, self.training
+        edge_features = stochastic_depth_3d(
+            input=edge_features, batch=node_batch, p=self.p, training=self.training
         )
         return node_features, edge_features
 

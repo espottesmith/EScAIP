@@ -1,11 +1,11 @@
 includes:
   - configs/s2ef/MD22/datasets/buckyball-catcher/base.yml
   - configs/s2ef/MD22/EScAIP/base/L6_H8_512_.yml
-  - configs/slurm/regular.yml
 
 model:
-  avg_num_nodes: 148
-  max_num_nodes_per_batch: 160
+  backbone:
+    batch_size: 12
+    max_num_nodes_per_batch: 160
 optim:
   batch_size: 12
   eval_batch_size: 8

@@ -17,8 +17,8 @@ class GlobalConfigs:
     activation: Literal[
         "squared_relu", "gelu", "leaky_relu", "relu", "smelu", "star_relu"
     ]
-    use_export: bool = False
     use_compile: bool = True
+    use_padding: bool = True
 
 
 @dataclass
@@ -50,7 +50,6 @@ class GraphNeuralNetworksConfigs:
         "math",
         "memory_efficient",
         "flash",
-        "xformers",
     ]
     atten_num_heads: int
     readout_hidden_layer_multiplier: int
@@ -58,7 +57,7 @@ class GraphNeuralNetworksConfigs:
     ffn_hidden_layer_multiplier: int
     num_layers_qmu: int = 0
     atomic_charge_spin_embedding_size: int = 0
-
+    use_angle_embedding: bool = True
 
 @dataclass
 class RegularizationConfigs:

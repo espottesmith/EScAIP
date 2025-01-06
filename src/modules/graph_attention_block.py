@@ -1,9 +1,5 @@
-from functools import partial
-
 import torch
 from torch import nn
-
-from xformers.ops import memory_efficient_attention
 
 from ..configs import (
     GlobalConfigs,
@@ -66,75 +62,23 @@ class EfficientGraphAttention(BaseGraphNeuralNetworkLayer):
             self.backbone_dtype = torch.float32
 
         # Multi-head attention
-        self.is_xformers = gnn_cfg.atten_name == "xformers"
-        if self.is_xformers:
-            self.in_proj = nn.Linear(global_cfg.hidden_size, 3 * global_cfg.hidden_size)
-            self.num_heads = gnn_cfg.atten_num_heads
-            if global_cfg.hidden_size % self.num_heads != 0:
-                raise ValueError(
-                    f"Hidden size {global_cfg.hidden_size} is not divisible by the number of heads {self.num_heads}"
-                )
-            self.head_dim = global_cfg.hidden_size // self.num_heads
-            self.out_proj = nn.Linear(global_cfg.hidden_size, global_cfg.hidden_size)
-            self.multi_head_attention = partial(
-                memory_efficient_attention, p=reg_cfg.atten_dropout
+        self.multi_head_attention = nn.MultiheadAttention(
+            embed_dim=global_cfg.hidden_size,
+            num_heads=gnn_cfg.atten_num_heads,
+            dropout=reg_cfg.atten_dropout,
+            bias=True,
+            batch_first=True,
+            dtype=self.backbone_dtype,
+        )
+
+        # scalar for attention bias
+        self.use_angle_embedding = gnn_cfg.use_angle_embedding
+        if self.use_angle_embedding:
+            self.attn_scalar = nn.Parameter(
+                torch.tensor(1.0, dtype=self.backbone_dtype), requires_grad=True
             )
-            self.compute_attention = self.compute_attention_xformers
-            if global_cfg.use_fp16_backbone:
-                self.in_proj = self.in_proj.half()
-                self.out_proj = self.out_proj.half()
         else:
-            self.multi_head_attention = nn.MultiheadAttention(
-                embed_dim=global_cfg.hidden_size,
-                num_heads=gnn_cfg.atten_num_heads,
-                dropout=reg_cfg.atten_dropout,
-                bias=True,
-                batch_first=True,
-                dtype=self.backbone_dtype,
-            )
-            self.compute_attention = self.compute_attention_pytorch
-
-    def compute_attention_pytorch(
-        self, message: torch.Tensor, data: GraphAttentionData
-    ):
-        output = self.multi_head_attention(
-            query=message,
-            key=message,
-            value=message,
-            key_padding_mask=~data.neighbor_mask,
-            need_weights=False,
-        )
-        return output[0]
-
-    def compute_attention_xformers(
-        self, message: torch.Tensor, data: GraphAttentionData
-    ):
-        attn_bias = data.attn_bias
-        num_nodes, num_neighbors, _ = message.shape
-        # Get query, key, value
-        # ref: swin transformer https://github.com/pytorch/vision/blob/main/torchvision/models/swin_transformer.py#L179-L181
-        qkv = self.in_proj(message)
-        # merge to a long sequence for block diagonal bias
-        qkv = qkv.reshape(num_nodes * num_neighbors, qkv.shape[-1])
-        # split heads and qkv
-        qkv = qkv.reshape(num_nodes * num_neighbors, 3, self.num_heads, self.head_dim)
-        # add batch dimension
-        qkv = qkv.unsqueeze(0).permute(2, 0, 1, 3, 4)
-        query, key, value = qkv[0], qkv[1], qkv[2]
-        # shape: (1, num_nodes * num_neighbors, num_heads, head_dim)
-
-        # Compute attention
-        output = self.multi_head_attention(
-            query=query,
-            key=key,
-            value=value,
-            attn_bias=attn_bias,
-        )
-
-        # Reshape output
-        output = output.squeeze(0).reshape(num_nodes, num_neighbors, -1)
-
-        return self.out_proj(output)
+            self.attn_scalar = torch.tensor(1.0)
 
     def forward(
         self,
@@ -156,7 +100,18 @@ class EfficientGraphAttention(BaseGraphNeuralNetworkLayer):
         )
 
         # Multi-head self-attention
-        edge_output = self.compute_attention(message, data)
+        if self.use_angle_embedding:
+            attn_mask = data.attn_mask + data.angle_embedding * self.attn_scalar
+        else:
+            attn_mask = data.attn_mask
+        edge_output = self.multi_head_attention(
+            query=message,
+            key=message,
+            value=message,
+            # key_padding_mask=~data.neighbor_mask,
+            attn_mask=attn_mask,
+            need_weights=False,
+        )[0]
 
         # Aggregation
         node_output = self.aggregate(edge_output, data.neighbor_mask)
@@ -242,7 +197,12 @@ class EfficientGraphAttentionBlock(nn.Module):
             self.norm_ffn = self.norm_ffn.half()
 
         # Stochastic depth
-        self.stochastic_depth = (
+        self.stochastic_depth_attn = (
+            StochasticDepth(reg_cfg.stochastic_depth_prob)
+            if reg_cfg.stochastic_depth_prob > 0.0
+            else SkipStochasticDepth()
+        )
+        self.stochastic_depth_ffn = (
             StochasticDepth(reg_cfg.stochastic_depth_prob)
             if reg_cfg.stochastic_depth_prob > 0.0
             else SkipStochasticDepth()
@@ -261,7 +221,7 @@ class EfficientGraphAttentionBlock(nn.Module):
         # attention
         node_hidden = self.norm_attn(node_features)
         node_hidden, edge_hidden = self.graph_attention(data, node_hidden)
-        node_hidden, edge_hidden = self.stochastic_depth(
+        node_hidden, edge_hidden = self.stochastic_depth_attn(
             node_hidden, edge_hidden, data.node_batch
         )
         node_features, edge_features = (
@@ -272,7 +232,7 @@ class EfficientGraphAttentionBlock(nn.Module):
         # feedforward
         node_hidden, edge_hidden = self.norm_ffn(node_features, edge_features)
         node_hidden, edge_hidden = self.feedforward(node_hidden, edge_hidden)
-        node_hidden, edge_hidden = self.stochastic_depth(
+        node_hidden, edge_hidden = self.stochastic_depth_ffn(
             node_hidden, edge_hidden, data.node_batch
         )
         node_features, edge_features = (

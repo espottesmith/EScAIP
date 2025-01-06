@@ -1,11 +1,11 @@
 includes:
   - configs/s2ef/MD22/datasets/stachyose/base.yml
   - configs/s2ef/MD22/EScAIP/base/L6_H8_512_.yml
-  - configs/slurm/regular.yml
 
 model:
-  avg_num_nodes: 87
-  max_num_nodes_per_batch: 96
+  backbone:
+    batch_size: 24
+    max_num_nodes_per_batch: 96
 optim:
   batch_size: 24
   eval_batch_size: 16

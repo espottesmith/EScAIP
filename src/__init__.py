@@ -1,3 +1,3 @@
-from .EScAIP import EfficientlyScaledAttentionInteratomicPotential
+from .EScAIP import EScAIPBackbone, EScAIPDirectForceHead, EScAIPEnergyHead
 
-__all__ = ["EfficientlyScaledAttentionInteratomicPotential"]
+__all__ = ["EScAIPBackbone", "EScAIPDirectForceHead", "EScAIPEnergyHead"]
