@@ -71,6 +71,7 @@ class ReadoutBlock(nn.Module):
         return energy_readout, force_readout
 
 
+# TODO: confirm that this structure makes sense
 class ChargeSpinReadoutBlock(nn.Module):
     """
     Readout from each graph attention block for partial charge and spin output
@@ -84,7 +85,6 @@ class ChargeSpinReadoutBlock(nn.Module):
     ):
         super().__init__()
 
-        
         # node read out
         self.node_ffn = get_feedforward(
             hidden_dim=global_cfg.hidden_size,

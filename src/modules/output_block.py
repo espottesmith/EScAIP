@@ -73,11 +73,7 @@ class OutputProjection(nn.Module):
         self,
         global_cfg: GlobalConfigs,
         gnn_cfg: GraphNeuralNetworksConfigs,
-        reg_cfg: RegularizationConfigs,
-        energy=True,
-        forces=True,
-        partial_charges=True,
-        partial_spins=True
+        reg_cfg: RegularizationConfigs
     ):
         super().__init__()
         # map concatenated readout features to hidden size

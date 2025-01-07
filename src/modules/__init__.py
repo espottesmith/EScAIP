@@ -1,14 +1,15 @@
-from .graph_attention_block import EfficientGraphAttentionBlock
-from .input_block import InputBlock
-from .output_block import OutputBlock, OutputProjection, OutputLayer
+from .graph_attention_block import EfficientGraphAttentionBlock, EfficientGraphAttentionBlockChargeSpin
+from .input_block import InputBlock, InputBlockChargeSpin
+from .output_block import OutputProjection, OutputLayer
 from .readout_block import ReadoutBlock, ChargeSpinReadoutBlock
 
 __all__ = [
     "EfficientGraphAttentionBlock",
+    "hEfficientGraphAttentionBlockChargeSpin",
     "InputBlock",
+    "InputBlockChargeSpin",
     "OutputProjection",
     "OutputLayer",
-    "OutputBlock",
     "ReadoutBlock",
-    "ChargeSpinReadoutBlock"
+    "ChargeSpinReadoutBlock",
 ]
